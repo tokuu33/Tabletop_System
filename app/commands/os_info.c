@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdlib.h>
 #include "FreeRTOS.h"
 #include "task.h"
 #include "shell.h"
@@ -129,13 +130,12 @@ int cmd_os_top(int argc, char *argv[])
     /* Parse optional interval argument. */
     uint32_t interval_ms = 2000;
     if (argc >= 2) {
-        const char *p = argv[1];
-        uint32_t v = 0;
-        while (*p >= '0' && *p <= '9') {
-            v = v * 10 + (uint32_t)(*p++ - '0');
-        }
+        /* Use atoi() so that leading whitespace (which letter-shell may leave
+         * at the start of a token) is skipped, consistent with how the rest
+         * of the codebase (e.g. ui_str_test.c) parses numeric arguments. */
+        int v = atoi(argv[1]);
         if (v >= 500) {
-            interval_ms = v;
+            interval_ms = (uint32_t)v;
         } else {
             shellPrint(shell, "os_top: interval must be >= 500 ms\n");
             return -1;
@@ -242,7 +242,7 @@ int cmd_os_top(int argc, char *argv[])
         }
 
         /* Roll the current snapshot into the 'previous' slot for next round. */
-        for (UBaseType_t i = 0; i < n_b && i < OS_TOP_MAX_TASKS; i++) {
+        for (UBaseType_t i = 0; i < n_b; i++) {
             snap_a[i] = snap_b[i];
         }
         total_a = total_b;
