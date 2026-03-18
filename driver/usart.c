@@ -159,3 +159,16 @@ signed short usart_read(char *data, unsigned short len)
     }
     return (signed short)received;
 }
+
+/**
+ * @brief Non-blocking single-byte read from the USART RX queue.
+ *
+ * Returns 1 and stores the byte in *data if a byte is available, or
+ * returns 0 immediately if the queue is empty.  Safe to call from any
+ * task that has exclusive use of the USART RX queue (e.g., the shell
+ * task while running a long-running command such as os_top).
+ */
+signed short usart_try_read(char *data)
+{
+    return (xQueueReceive(rx_queue, data, 0) == pdTRUE) ? 1 : 0;
+}
