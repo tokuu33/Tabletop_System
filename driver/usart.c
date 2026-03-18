@@ -9,6 +9,7 @@
 
 static SemaphoreHandle_t write_async_semaphore;
 static SemaphoreHandle_t write_busy_locker;
+static QueueHandle_t     rx_queue;
 
 void usart_io_init(void)
 {
@@ -83,6 +84,9 @@ void usart_init(void)
     write_busy_locker = xSemaphoreCreateMutex();
     configASSERT(write_busy_locker);
 
+    rx_queue = xQueueCreate(64, sizeof(char));
+    configASSERT(rx_queue);
+
     usart_io_init();
     usart_serial_init();
     usart_dma_init();
@@ -127,4 +131,44 @@ void DMA2_Stream7_IRQHandler(void)
         xSemaphoreGiveFromISR(write_async_semaphore, &pxHigherPriorityTaskWoken);
         portYIELD_FROM_ISR(pxHigherPriorityTaskWoken);
     }
+}
+
+void USART1_IRQHandler(void)
+{
+    if (USART_GetITStatus(USART1, USART_IT_RXNE) != RESET)
+    {
+        char ch = (char)USART_ReceiveData(USART1);
+        BaseType_t pxHigherPriorityTaskWoken = pdFALSE;
+        /* If the queue is full the incoming byte is discarded.  This is
+         * acceptable for interactive keyboard input because the shell
+         * processes each character before the next keystroke arrives. */
+        xQueueSendFromISR(rx_queue, &ch, &pxHigherPriorityTaskWoken);
+        portYIELD_FROM_ISR(pxHigherPriorityTaskWoken);
+    }
+}
+
+signed short usart_read(char *data, unsigned short len)
+{
+    unsigned short received = 0;
+    while (received < len)
+    {
+        /* portMAX_DELAY: blocks forever until a byte is available;
+         * xQueueReceive always returns pdTRUE in this case. */
+        xQueueReceive(rx_queue, &data[received], portMAX_DELAY);
+        received++;
+    }
+    return (signed short)received;
+}
+
+/**
+ * @brief Non-blocking single-byte read from the USART RX queue.
+ *
+ * Returns 1 and stores the byte in *data if a byte is available, or
+ * returns 0 immediately if the queue is empty.  Safe to call from any
+ * task that has exclusive use of the USART RX queue (e.g., the shell
+ * task while running a long-running command such as os_top).
+ */
+signed short usart_try_read(char *data)
+{
+    return (xQueueReceive(rx_queue, data, 0) == pdTRUE) ? 1 : 0;
 }
