@@ -1,0 +1,137 @@
+#include <stdint.h>
+#include "FreeRTOS.h"
+#include "task.h"
+#include "queue.h"
+#include "st7789.h"
+#include "ui.h"
+#include "font.h"
+#include "image.h"
+
+#define LOG_TAG "UI"
+#define LOG_LVL ELOG_LVL_INFO
+#include "elog.h"
+
+#define UI_STRING_MAX_LEN  32
+
+typedef enum
+{
+    UI_EVENT_FILL_COLOR,
+    UI_EVENT_WRITE_STRING,
+    UI_EVENT_DRAW_IMAGE,
+} ui_event_t;
+
+typedef struct
+{
+    ui_event_t event;
+    union
+    {
+        struct
+        {
+            uint16_t x;
+            uint16_t y;
+            uint16_t width;
+            uint16_t height;
+            uint16_t color;
+        } fill_color;
+        struct
+        {
+            uint16_t x;
+            uint16_t y;
+            char str[UI_STRING_MAX_LEN];
+            uint16_t color;
+            uint16_t bg_color;
+            const font_t *font;
+        } write_string;
+        struct
+        {
+            uint16_t x;
+            uint16_t y;
+            const image_t *image;
+        } draw_image;
+    };
+} ui_message_t;
+
+static QueueHandle_t ui_queue;
+
+static void ui_func(void *param)
+{
+    ui_message_t ui_msg;
+
+    st7789_init();
+
+    while (1)
+    {
+        xQueueReceive(ui_queue, &ui_msg, portMAX_DELAY);
+
+        switch (ui_msg.event)
+        {
+            case UI_EVENT_FILL_COLOR:
+                st7789_fill_color(ui_msg.fill_color.x, ui_msg.fill_color.y,
+                                  ui_msg.fill_color.width, ui_msg.fill_color.height,
+                                  ui_msg.fill_color.color);
+                break;
+            case UI_EVENT_WRITE_STRING:
+                st7789_write_string(ui_msg.write_string.x, ui_msg.write_string.y,
+                                    ui_msg.write_string.str,
+                                    ui_msg.write_string.color,
+                                    ui_msg.write_string.bg_color,
+                                    ui_msg.write_string.font);
+                break;
+            case UI_EVENT_DRAW_IMAGE:
+                st7789_draw_image(ui_msg.draw_image.x, ui_msg.draw_image.y,
+                                  ui_msg.draw_image.image);
+                break;
+            default:
+                log_w("Unknown UI event: %d", ui_msg.event);
+                break;
+        }
+    }
+}
+
+void ui_init(void)
+{
+    ui_queue = xQueueCreate(16, sizeof(ui_message_t));
+    configASSERT(ui_queue);
+    xTaskCreate(ui_func, "UI Task", 1024, NULL, tskIDLE_PRIORITY + 8, NULL);
+}
+void ui_fill_color(uint16_t x1, uint16_t y1, uint16_t x2, uint16_t y2, uint16_t color)
+{
+    ui_message_t ui_msg;
+    ui_msg.event = UI_EVENT_FILL_COLOR;
+    ui_msg.fill_color.x = x1;
+    ui_msg.fill_color.y = y1;
+    ui_msg.fill_color.width = x2;
+    ui_msg.fill_color.height = y2;
+    ui_msg.fill_color.color = color;
+
+    xQueueSend(ui_queue, &ui_msg, portMAX_DELAY);
+}
+
+void ui_write_string(uint16_t x, uint16_t y, const char *str, uint16_t color, uint16_t bg_color, const font_t *font)
+{
+    ui_message_t ui_msg;
+    ui_msg.event = UI_EVENT_WRITE_STRING;
+    ui_msg.write_string.x = x;
+    ui_msg.write_string.y = y;
+    ui_msg.write_string.color = color;
+    ui_msg.write_string.bg_color = bg_color;
+    ui_msg.write_string.font = font;
+    strncpy(ui_msg.write_string.str, str, sizeof(ui_msg.write_string.str) - 1);
+    ui_msg.write_string.str[sizeof(ui_msg.write_string.str) - 1] = '\0'; // 确保字符串以空字符结尾,防止溢出
+
+    if (xQueueSend(ui_queue, &ui_msg, pdMS_TO_TICKS(50)) != pdPASS)
+    {
+        log_w("UI queue full, drop: %s", str); // 如果UI队列满了,丢弃这次字符串更新,避免阻塞调用者,旧的字符串会继续显示,直到下一次更新
+    }
+}
+
+void ui_draw_image(uint16_t x, uint16_t y, const image_t *image)
+{
+    ui_message_t ui_msg;
+    ui_msg.event = UI_EVENT_DRAW_IMAGE;
+    ui_msg.draw_image.x = x;
+    ui_msg.draw_image.y = y;
+    ui_msg.draw_image.image = image;
+
+    xQueueSend(ui_queue, &ui_msg, portMAX_DELAY);
+}
