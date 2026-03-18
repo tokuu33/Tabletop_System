@@ -4,6 +4,7 @@
 #include <stdbool.h>
 #include "stm32f4xx.h"
 void usart_write(const char str[], uint32_t size);
+signed short usart_read(char *data, unsigned short len);
 void usart_init(void);
 
 #endif /* __USART_H__ */
